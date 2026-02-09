@@ -83,6 +83,173 @@ module cpu (
 
 
     /** ******  Assignment To Do ***** **/
+    // ------------------------------------------------------------
+    // Step 1) Extract fixed-position fields (must be assigns)
+    // ------------------------------------------------------------
+    assign s_id_opc  = s_id_instr[6:0];
+    assign s_id_rd   = s_id_instr[11:7];
+    assign s_id_fun3 = s_id_instr[14:12];
+    assign s_id_rs1  = s_id_instr[19:15];
+    assign s_id_rs2  = s_id_instr[24:20];
+    assign s_id_fun7 = s_id_instr[31:25];
+
+    // ------------------------------------------------------------
+    // Step 1b) Build immediates (sign-extended to 32)
+    // ------------------------------------------------------------
+    // I-type immediate: instr[31:20]
+    assign s_id_immedi = $signed({{20{s_id_instr[31]}}, s_id_instr[31:20]});
+
+    // S-type immediate: instr[31:25] instr[11:7]
+    assign s_id_immeds = $signed({{20{s_id_instr[31]}}, s_id_instr[31:25], s_id_instr[11:7]});
+
+    // B-type immediate: instr[31] instr[7] instr[30:25] instr[11:8] 0
+    assign s_id_immedb = $signed({{19{s_id_instr[31]}},
+                                  s_id_instr[31],
+                                  s_id_instr[7],
+                                  s_id_instr[30:25],
+                                  s_id_instr[11:8],
+                                  1'b0});
+
+    // J-type immediate: instr[31] instr[19:12] instr[20] instr[30:21] 0
+    assign s_id_immedj = $signed({{11{s_id_instr[31]}},
+                                  s_id_instr[31],
+                                  s_id_instr[19:12],
+                                  s_id_instr[20],
+                                  s_id_instr[30:21],
+                                  1'b0});
+
+    // U-type immediate: instr[31:12] << 12
+    assign s_id_immedu = $signed({s_id_instr[31:12], 12'b0});
+
+    // ------------------------------------------------------------
+    // Step 2) Select the "active" immediate based on opcode
+    // ------------------------------------------------------------
+    always_comb begin
+        s_id_immed = 32'sd0;
+        case (opc)
+            I_TYPE_ALU,
+            I_TYPE_LOAD,
+            I_TYPE_JUMP,
+            I_TYPE_ECALL:  s_id_immed = s_id_immedi;
+
+            S_TYPE:        s_id_immed = s_id_immeds;
+            B_TYPE:        s_id_immed = s_id_immedb;
+            J_TYPE:        s_id_immed = s_id_immedj;
+
+            U_TYPE_LUI,
+            U_TYPE_AUIPC:  s_id_immed = s_id_immedu;
+
+            default:       s_id_immed = 32'sd0;
+        endcase
+    end
+
+    // ------------------------------------------------------------
+    // Step 3) Decode instruction name into instr_string
+    // ------------------------------------------------------------
+    always_comb begin
+        instr_string = "unknown";
+
+        case (opc)
+
+            // ---------------- R-TYPE ----------------
+            R_TYPE: begin
+                case (s_id_fun3)
+                    3'b000: instr_string = (s_id_fun7 == 7'b0100000) ? "sub" :
+                                           (s_id_fun7 == 7'b0000000) ? "add" : "unknown";
+                    3'b001: instr_string = (s_id_fun7 == 7'b0000000) ? "sll"  : "unknown";
+                    3'b010: instr_string = (s_id_fun7 == 7'b0000000) ? "slt"  : "unknown";
+                    3'b011: instr_string = (s_id_fun7 == 7'b0000000) ? "sltu" : "unknown";
+                    3'b100: instr_string = (s_id_fun7 == 7'b0000000) ? "xor"  : "unknown";
+                    3'b101: instr_string = (s_id_fun7 == 7'b0100000) ? "sra"  :
+                                           (s_id_fun7 == 7'b0000000) ? "srl"  : "unknown";
+                    3'b110: instr_string = (s_id_fun7 == 7'b0000000) ? "or"   : "unknown";
+                    3'b111: instr_string = (s_id_fun7 == 7'b0000000) ? "and"  : "unknown";
+                    default: instr_string = "unknown";
+                endcase
+            end
+
+            // -------------- I-TYPE ALU --------------
+            I_TYPE_ALU: begin
+                case (s_id_fun3)
+                    3'b000: instr_string = "addi";
+                    3'b010: instr_string = "slti";
+                    3'b011: instr_string = "sltiu";
+                    3'b100: instr_string = "xori";
+                    3'b110: instr_string = "ori";
+                    3'b111: instr_string = "andi";
+                    3'b001: instr_string = (s_id_fun7 == 7'b0000000) ? "slli" : "unknown";
+                    3'b101: instr_string = (s_id_fun7 == 7'b0100000) ? "srai" :
+                                           (s_id_fun7 == 7'b0000000) ? "srli" : "unknown";
+                    default: instr_string = "unknown";
+                endcase
+            end
+
+            // -------------- I-TYPE LOAD --------------
+            I_TYPE_LOAD: begin
+                case (s_id_fun3)
+                    3'b000: instr_string = "lb";
+                    3'b001: instr_string = "lh";
+                    3'b010: instr_string = "lw";
+                    3'b100: instr_string = "lbu";
+                    3'b101: instr_string = "lhu";
+                    default: instr_string = "unknown";
+                endcase
+            end
+
+            // -------------- I-TYPE JUMP --------------
+            I_TYPE_JUMP: begin
+                // jalr is identified by opcode=1100111, funct3=000 in RV32I
+                instr_string = (s_id_fun3 == 3'b000) ? "jalr" : "unknown";
+            end
+
+            // ----------- I-TYPE ECALL/EBREAK ---------
+            I_TYPE_ECALL: begin
+                // funct3 is 000 for system instructions; imm distinguishes ecall/ebreak
+                if (s_id_fun3 == 3'b000) begin
+                    if (s_id_instr[31:20] == 12'h000) instr_string = "ecall";
+                    else if (s_id_instr[31:20] == 12'h001) instr_string = "ebreak";
+                    else instr_string = "system";
+                end else begin
+                    instr_string = "unknown";
+                end
+            end
+
+            // ---------------- S-TYPE -----------------
+            S_TYPE: begin
+                case (s_id_fun3)
+                    3'b000: instr_string = "sb";
+                    3'b001: instr_string = "sh";
+                    3'b010: instr_string = "sw";
+                    default: instr_string = "unknown";
+                endcase
+            end
+
+            // ---------------- B-TYPE -----------------
+            B_TYPE: begin
+                case (s_id_fun3)
+                    3'b000: instr_string = "beq";
+                    3'b001: instr_string = "bne";
+                    3'b100: instr_string = "blt";
+                    3'b101: instr_string = "bge";
+                    3'b110: instr_string = "bltu";
+                    3'b111: instr_string = "bgeu";
+                    default: instr_string = "unknown";
+                endcase
+            end
+
+            // ---------------- J-TYPE -----------------
+            J_TYPE: begin
+                instr_string = "jal";
+            end
+
+            // ------------- U-TYPE LUI/AUIPC ----------
+            U_TYPE_LUI:   instr_string = "lui";
+            U_TYPE_AUIPC: instr_string = "auipc";
+
+            default: instr_string = "unknown";
+        endcase
+    end
+
 
 
 
