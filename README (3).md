@@ -4,7 +4,7 @@ In this phase, you'll practice writing SystemVerilog while taking a step towards
 
 Provided is some starter code that mostly overlaps the code provided in Phase 1.  This time, it's useful to understand what the code provided to you is.  In the below diagram, you can see there's a top level file (system_tb.sv) that is a testbench.  It instantiates a module of type system (found in system.sv).  The module system consists of unclocked_ro_mem.sv, which serves as the instruction memory, and cpu.sv, which is our start of a cpu (what you'll need to modify).  Note that unclocked_ro_mem is parameterized with a file name (init.mem) -- that file consists of the machine code for an RISC-V program, in hex, with one instruction per line.  It reads that into memory.
 
-![System Overview](img/Phase2-system.png)
+![System Overview](Phase2-system.png)
 
 For cpu.sv, there are three main sections (indicated with comments in the file).  The first is fetching instructions from memory (so, it'll increment a register called pc), and then assign the data read from memory to a signal, s_id_instr.  
 
